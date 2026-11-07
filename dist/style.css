@@ -142,3 +142,23 @@ main{padding:12px}
 }
 .errbar b{color:#ffb020}
 
+
+/* ---------------- 形态方向（传统语境）着色 ----------------
+ * 红＝传统看多，绿＝传统看空，灰＝方向中性
+ * 这是"教科书说法"，与「次日涨」百分比的颜色含义不同，别混。
+ */
+.dir-bull{color:var(--up)}
+.dir-bear{color:var(--down)}
+.dir-neutral{color:var(--text)}
+.pn .arw{font-style:normal;font-size:10px;margin-right:4px;opacity:.9;vertical-align:1px}
+.dirlegend{
+  display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center;
+  margin:0 0 8px;padding:7px 10px;background:var(--panel2);
+  border-radius:8px;font-size:11.5px;
+}
+.dirlegend .arw{font-style:normal;font-size:10px;margin-right:3px}
+.dirlegend .dl-note{color:#5c6572;font-size:11px;width:100%;margin-top:2px}
+.badge.dirbadge{font-size:11px}
+.badge.dirbadge.dir-bull{color:var(--up);border-color:#5a2130;background:#241016}
+.badge.dirbadge.dir-bear{color:var(--down);border-color:#1f4a38;background:#0f1f19}
+.badge.dirbadge.dir-neutral{color:var(--dim);border-color:var(--line);background:var(--panel2)}

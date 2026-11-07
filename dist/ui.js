@@ -1,4 +1,4 @@
-﻿/* ui.js — 界面渲染
+/* ui.js — 界面渲染
  * 只负责把 app.js 算好的东西画出来，不做任何计算
  */
 (function () {
@@ -15,6 +15,13 @@
     weak: ['单次显著', 'weak'],
     strong: ['校正后显著', 'strong'],
   };
+  /* 传统语境下的方向：红=看多 绿=看空 灰=中性。只影响着色，不影响统计。 */
+  const DIR_CLS = { bull: 'dir-bull', bear: 'dir-bear', neutral: 'dir-neutral' };
+  const DIR_ARROW = { bull: '▲', bear: '▼', neutral: '·' };
+  const DIR_TEXT = { bull: '传统看多', bear: '传统看空', neutral: '方向中性' };
+  const dirCls = p => DIR_CLS[p.dir] || 'dir-neutral';
+  const dirArrow = p => DIR_ARROW[p.dir] || '·';
+  const dirName = (p) => `<i class="arw">${dirArrow(p)}</i>${esc(p.name)}`;
   const TREND = { up: '上行', down: '下行', flat: '走平', unknown: '—' };
   const STRENGTH = { weak: '弱', mid: '中等', strong: '强', unknown: '—' };
   const POSITION = { low: '低位', mid: '中位', high: '高位', unknown: '—' };
@@ -192,7 +199,7 @@
     </div>
     <div class="plist">${triggered.map(p => {
       const v = VERDICT[p.verdict] || ['—', ''];
-      return `<div class="prow" data-pid="${p.id}"><span class="pn">${esc(p.name)}</span>
+      return `<div class="prow" data-pid="${p.id}"><span class="pn ${dirCls(p)}">${dirName(p)}</span>
         <span class="pnum">n=${p.n}</span>
         <span class="pnum ${rateCls(p)}">${fmtPct(p.upRate)}</span>
         <span class="badge ${v[1]}">${v[0]}</span></div>`;
@@ -208,10 +215,16 @@
     <span>全样本基准 <b>${fmtPct(h.baseRate)}</b></span>
     <span><b>z</b> 与基准的标准化偏离</span>
   </div>
+  <div class="dirlegend">
+    <span class="dir-bull"><i class="arw">▲</i>传统看多</span>
+    <span class="dir-bear"><i class="arw">▼</i>传统看空</span>
+    <span class="dir-neutral"><i class="arw">·</i>方向中性</span>
+    <span class="dl-note">名字颜色＝教科书里的说法，不是实测结论</span>
+  </div>
   <div class="plist">
     ${ranked.map(p => {
       const v = VERDICT[p.verdict] || ['—', ''];
-      return `<div class="prow" data-pid="${p.id}"><span class="pn">${esc(p.name)}</span>
+      return `<div class="prow" data-pid="${p.id}"><span class="pn ${dirCls(p)}">${dirName(p)}</span>
         <span class="pnum">n=${p.n}</span>
         <span class="pnum ${rateCls(p)}">${fmtPct(p.upRate)}</span>
         <span class="pz">${p.z >= 0 ? '+' : ''}${fmtNum(p.z)}</span>
@@ -219,8 +232,10 @@
     }).join('')}
   </div>
   <div class="note">
-    红色＝次日上涨率<b>高于</b>基准，绿色＝<b>低于</b>基准。<br>
-    z 是与基准比较的标准化偏离绝对值：|z| ≥ 1.96 才算单次显著，<br>
+    <b>形态名颜色</b>（▲红 / ▼绿 / ·灰）＝这种形态在教科书里通常被当成看多 / 看空 / 中性，
+    <b>和实测结果无关</b>，两者经常相反。<br>
+    <b>百分比颜色</b>（红 / 绿）＝这次实测的次日上涨率相对基准偏高 / 偏低，才是数据。<br>
+    z 是与基准比较的标准化偏离：|z| ≥ 1.96 才算单次显著，
     34 个形态同时检验时需 |z| ≥ 3.17 才算校正后显著。<br>
     样本少于 ${T2.MIN_N} 次一律标「样本不足」，不当结论用。
   </div>
@@ -229,7 +244,7 @@
 <section class="card">
   <h2>说明</h2>
   <div class="note">
-    · ${k.fqt === 0 ? '指数用不复权' : 'ETF / 个股用后复权'}（fqt=${k.fqt}）<br>
+    · ${k.fqt === 0 ? '指数：不复权' : 'ETF / 个股：前复权（按最新收盘价折算，价格为真实报价）'}（fqt=${k.fqt}${k.scale && k.scale !== 1 ? '，缩放 ' + k.scale.toFixed(4) : ''}）<br>
     · 「强势收盘」是尾盘拉升的日线代理，不是真尾盘<br>
     · 「缩量板」只对个股适用，指数/ETF 自动跳过<br>
     · 本工具只描述状态，不预测涨跌
@@ -292,6 +307,7 @@
 
       <div class="sh-badges">
         <span class="badge ${v[1]}">${v[0]}</span>
+        <span class="badge dirbadge ${dirCls(p)}">${dirArrow(p)} ${DIR_TEXT[p.dir] || '方向中性'}</span>
         ${p.triggersToday ? '<span class="badge today">今日触发</span>' : ''}
       </div>
 

@@ -220,19 +220,19 @@
   /* ---------------------------------------------------------------- 取数 */
 
   function fqtFor(sym) {
-    // 指数不复权；ETF / 个股后复权（ETF 有分红，不复权会造假跳空）
+    // 指数不复权；ETF / 个股用后复权取数（ETF 有分红，不复权会造假跳空）
     return sym.kind === 'i' ? 0 : 2;
   }
 
-  async function fetchKline(sym, opts = {}) {
-    const fqt = opts.fqt !== undefined ? opts.fqt : fqtFor(sym);
+  /** 拉一条 K 线序列。beg 可指定起始日（YYYYMMDD），用来只要最后一根的真实价 */
+  async function fetchSeries(sym, fqt, beg) {
     const qs = new URLSearchParams({
       secid: secid(sym),
       fields1: 'f1,f2,f3,f4',
       fields2: 'f51,f52,f53,f54,f55,f56,f57',
       klt: '101',
       fqt: String(fqt),
-      beg: '19900101',
+      beg: beg || '19900101',
       end: '20500101',
     });
     const res = await fetch(`${API}?${qs}`, { cache: 'no-store' });
@@ -245,7 +245,6 @@
     const k = {
       name: d.name || sym.name || '',
       code: d.code || sym.code,
-      kind: sym.kind || 's',     // 形态适用性依赖它；缺失会把指数当成股票
       fqt,
       date: new Array(n), open: new Float64Array(n), high: new Float64Array(n),
       low: new Float64Array(n), close: new Float64Array(n),
@@ -260,6 +259,48 @@
       k.low[i] = +p[4];
       k.volume[i] = +p[5];
       k.amount[i] = +p[6];
+    }
+    return k;
+  }
+
+  /**
+   * 取数。关键：**指标要用复权序列，展示要用真实价格**。
+   *
+   * 后复权序列永远为正（前复权在东财是减法式，茅台会出 -187 的负价），
+   * 但它的末端值不是真实股价（茅台后复权 8906，实际 1453）。
+   *
+   * 所以：拿最后一根的真实收盘价，把整条序列**等比缩放**回真实价格。
+   * 等比缩放不改变任何比率型指标（MA/RSI/MACD/ADX/ATR 相对值全部不变），
+   * 但用户看到的、图上画的就是真实股价了 —— 这等价于数学上正确的前复权。
+   */
+  async function fetchKline(sym, opts = {}) {
+    const fqt = opts.fqt !== undefined ? opts.fqt : fqtFor(sym);
+    const k = await fetchSeries(sym, fqt);
+    k.kind = sym.kind || 's';   // 形态适用性依赖它；缺失会把指数当成股票
+    k.scale = 1;
+
+    if (fqt !== 0 && k.close.length) {
+      const lastDate = k.date[k.date.length - 1].replace(/-/g, '');
+      try {
+        const real = await fetchSeries(sym, 0, lastDate);
+        const j = real.close.length - 1;
+        if (j >= 0 && real.date[j] === k.date[k.date.length - 1]) {
+          const realClose = real.close[j];
+          const adjClose = k.close[k.close.length - 1];
+          if (realClose > 0 && adjClose > 0) {
+            const s = realClose / adjClose;
+            if (Number.isFinite(s) && s > 0) {
+              for (let i = 0; i < k.close.length; i++) {
+                k.open[i] *= s; k.high[i] *= s; k.low[i] *= s; k.close[i] *= s;
+              }
+              k.scale = s;
+            }
+          }
+        }
+      } catch (e) {
+        // 拿不到真实价就保持复权价：指标仍然正确，只是价格看着不是真实报价
+        console.warn('[T2] 取真实收盘价失败，使用复权价展示', e);
+      }
     }
     return k;
   }
@@ -548,6 +589,35 @@
       return (k.close[i] - k.low[i]) / r >= 0.8 && d.ret[i] > 0;
     });
 
+  /* --- 传统语境下的方向（只用于界面着色，不影响任何统计） ---
+   * bull = 看多（红）  bear = 看空（绿）  neutral = 中性/方向不定（灰）
+   * 注意：这是"教科书怎么说"，不是"实测怎么说"。
+   * 两者经常相反（锤头线教科书看多，实测 42.6% 次日上涨），
+   * 所以界面上必须同时给出实测数字，颜色只代表传统说法。
+   */
+  const DIR = {
+    // 单根 K 线
+    big_yang: 'bull', big_yin: 'bear', marubozu: 'neutral',
+    hammer: 'bull', inv_hammer: 'bull', doji: 'neutral',
+    long_lower: 'bull', long_upper: 'bear',
+    // K 线组合
+    bull_engulf: 'bull', bear_engulf: 'bear', harami: 'neutral',
+    three_white: 'bull', three_black: 'bear', gap: 'neutral',
+    // 量价
+    vol_up_rise: 'bull', vol_up_fall: 'bear',
+    vol_dn_rise: 'bull', vol_dn_fall: 'bear',
+    divergence: 'bear', huge_vol: 'neutral', tiny_vol: 'neutral',
+    // 趋势位置
+    above_ma20: 'bull', below_ma20: 'bear',
+    break_high20: 'bull', break_low20: 'bear',
+    bull_align: 'bull', ma_squeeze: 'neutral', squeeze_break: 'bull',
+    // 指标
+    macd_gold: 'bull', macd_dead: 'bear',
+    rsi_ob: 'bear', rsi_os: 'bull',
+    // A 股特色
+    limit_up_shrink: 'bull', strong_close: 'bull',
+  };
+
   /* --- 计算全历史触发 --- */
 
   function computePatterns(k, d) {
@@ -591,14 +661,18 @@
         continue;
       }
       const f = flags[p.id];
-      let cnt = 0, up = 0, f5 = [], f10 = [], hitIdx = [];
+      let cnt = 0, up = 0, f5 = [], f10 = [];
       for (let i = startIdx; i < n - 1; i++) {
         if (!f[i]) continue;
         cnt++;
         if (k.close[i + 1] > k.close[i]) up++;
         if (i + 5 < n) f5.push(k.close[i + 5] / k.close[i] - 1);
         if (i + 10 < n) f10.push(k.close[i + 10] / k.close[i] - 1);
-        if (hitIdx.length < 10) hitIdx.push(i);
+      }
+      // 最近 10 次触发：从末尾往前扫（正序收集再截断会拿到最早的 10 次）
+      const hitIdx = [];
+      for (let i = n - 2; i >= startIdx && hitIdx.length < 10; i--) {
+        if (f[i]) hitIdx.push(i);
       }
       const upRate = cnt ? up / cnt : NaN;
       const se = cnt ? Math.sqrt(baseRate * (1 - baseRate) / cnt) : NaN;
@@ -613,9 +687,10 @@
 
       out.push({
         id: p.id, name: p.name, cat: p.cat, desc: p.desc,
+        dir: DIR[p.id] || 'neutral',
         applies: true, n: cnt, upRate, baseRate, delta: upRate - baseRate, z,
         fwd5: avg(f5), fwd10: avg(f10), verdict,
-        lastHits: hitIdx.reverse().slice(0, 10),
+        lastHits: hitIdx,          // 已是从新到旧，不要再 reverse
         triggersToday: n > 0 ? !!f[n - 1] : false,
       });
     }

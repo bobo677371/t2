@@ -1,4 +1,4 @@
-/* sw.js — Service Worker
+﻿/* sw.js — Service Worker
  *
  * 策略：**网络优先，失败回退缓存**
  *   - 不做「缓存优先」，因为之前已经被旧文件坑过一次（CSS 覆盖 hidden 那次）
@@ -8,7 +8,7 @@
  *
  * 改版本号即可让旧缓存失效。
  */
-const VERSION = 'v5';
+const VERSION = 'v7';
 const CACHE = 't2-' + VERSION;
 
 const SHELL = [
@@ -80,3 +80,5 @@ self.addEventListener('fetch', e => {
       }))
   );
 });
+
+
