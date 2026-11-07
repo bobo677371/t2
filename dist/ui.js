@@ -34,6 +34,11 @@
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const fmtPct = (x, d = 1) => Number.isFinite(x) ? (x * 100).toFixed(d) + '%' : '—';
   const fmtNum = (x, d = 2) => Number.isFinite(x) ? x.toFixed(d) : '—';
+  const hhmm = (ts) => {
+    if (!ts) return '—';
+    const d = new Date(ts);
+    return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  };
   const cls = v => v > 0 ? 'up' : v < 0 ? 'down' : 'flat';
 
   /** 千亿/亿 单位 */
@@ -122,10 +127,20 @@
 
   /* ---------------- 主流程 ---------------- */
 
-  async function load(sym) {
+  /* 自动刷新：iOS PWA 从后台恢复时不会重新加载页面，
+   * 不做这件事就会拿着几小时前的数据当成最新。 */
+  let lastLoadAt = 0;                 // 上次成功取数的时间戳
+  const FRESH_MS = 3 * 60 * 1000;     // 3 分钟内不重复拉
+  let autoTimer = null;
+
+  async function load(sym, opts = {}) {
+    const silent = !!opts.silent;
     if (busy) return;
     busy = true;
-    main.innerHTML = `<section class="empty"><div class="spinner"></div><p>拉取 ${esc(sym.name || sym.code)}…</p></section>`;
+    const keepY = window.scrollY;
+    if (!silent) {
+      main.innerHTML = `<section class="empty"><div class="spinner"></div><p>拉取 ${esc(sym.name || sym.code)}…</p></section>`;
+    }
     try {
       const k = await T2.fetchKline(sym);
       const d = T2.computeIndicators(k);
@@ -133,14 +148,55 @@
       const state = T2.computeState(k, d);
       const h = T2.health(k, d, flags);
       current = { sym, k, d, state, h };
+      lastLoadAt = Date.now();
       render();
+      if (silent) window.scrollTo(0, keepY);
       try { localStorage.setItem(LS_KEY, JSON.stringify({ m: sym.market, c: sym.code, k: sym.kind })); } catch (_) {}
     } catch (err) {
-      main.innerHTML = `<div class="err">加载失败：${esc(err.message)}<br><br>检查网络后重试</div>`;
+      if (silent) {
+        toast('刷新失败：' + err.message);
+      } else {
+        main.innerHTML = `<div class="err">加载失败：${esc(err.message)}<br><br>检查网络后重试</div>`;
+      }
     } finally {
       busy = false;
     }
   }
+
+  /** 静默刷新当前标的（数据够新就跳过） */
+  function maybeRefresh(force) {
+    if (!current) return;
+    if (busy) return;
+    if (!force && Date.now() - lastLoadAt < FRESH_MS) return;
+    load(current.sym, { silent: true });
+  }
+
+  /** 轻提示 */
+  let toastTimer = null;
+  function toast(msg) {
+    let el = document.getElementById('toast');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'toast';
+      el.className = 'toast';
+      document.body.appendChild(el);
+    }
+    el.textContent = msg;
+    el.hidden = false;
+    requestAnimationFrame(() => el.classList.add('on'));
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      el.classList.remove('on');
+      setTimeout(() => { el.hidden = true; }, 220);
+    }, 2200);
+  }
+
+  /* 回到前台 / 从 bfcache 恢复 / 切回标签页 —— 都检查一次 */
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') maybeRefresh(false);
+  });
+  window.addEventListener('pageshow', e => { if (e.persisted) maybeRefresh(false); });
+  window.addEventListener('focus', () => maybeRefresh(false));
 
   function render() {
     const { sym, k, state, h } = current;
@@ -168,12 +224,15 @@
 
     main.innerHTML = `
 <section class="card quote">
-  <div class="name">${esc(shown)}<span class="code">${sym.market}.${esc(k.code)}</span></div>
+  <div class="name">
+    <span>${esc(shown)}<span class="code">${sym.market}.${esc(k.code)}</span></span>
+    <button id="btnRefresh" class="refresh${busy ? ' spin' : ''}" aria-label="刷新" title="刷新">⟳</button>
+  </div>
   <div class="big">
     <span class="px ${chgCls}">${fmtNum(state.close, 2)}</span>
     <span class="chg ${chgCls}">${state.change >= 0 ? '+' : ''}${fmtPct(state.change, 2)}</span>
   </div>
-  <div class="meta">${esc(state.date)} · 成交 ${fmtAmt(state.amount)} · 共 ${k.close.length} 根日线</div>
+  <div class="meta">${esc(state.date)} · 成交 ${fmtAmt(state.amount)} · 共 ${k.close.length} 根日线 · 更新于 ${hhmm(lastLoadAt)}</div>
 </section>
 
 <section class="card chart-card">
@@ -257,6 +316,10 @@
       try { T2Chart.render(box, k, current.d); }
       catch (e) { box.innerHTML = '<div class="muted">图表渲染失败</div>'; }
     }
+
+    // 手动刷新
+    const btn = $('btnRefresh');
+    if (btn) btn.onclick = () => { maybeRefresh(true); };
   }
 
   /* ---------------- 形态详情弹层 ---------------- */

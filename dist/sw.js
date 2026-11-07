@@ -8,7 +8,7 @@
  *
  * 改版本号即可让旧缓存失效。
  */
-const VERSION = 'v7';
+const VERSION = 'v8';
 const CACHE = 't2-' + VERSION;
 
 const SHELL = [
@@ -80,5 +80,6 @@ self.addEventListener('fetch', e => {
       }))
   );
 });
+
 
 

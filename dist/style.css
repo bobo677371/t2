@@ -162,3 +162,21 @@ main{padding:12px}
 .badge.dirbadge.dir-bull{color:var(--up);border-color:#5a2130;background:#241016}
 .badge.dirbadge.dir-bear{color:var(--down);border-color:#1f4a38;background:#0f1f19}
 .badge.dirbadge.dir-neutral{color:var(--dim);border-color:var(--line);background:var(--panel2)}
+
+/* ---------------- 刷新按钮与轻提示 ---------------- */
+.quote .name{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.refresh{
+  background:var(--panel2);border:1px solid var(--line);color:var(--dim);
+  width:30px;height:30px;border-radius:50%;font-size:15px;line-height:1;
+  cursor:pointer;flex:none;display:flex;align-items:center;justify-content:center;
+}
+.refresh:active{background:#22304a;color:#8ab4ff}
+.refresh.spin{animation:spin .8s linear infinite}
+.toast{
+  position:fixed;left:50%;bottom:calc(28px + env(safe-area-inset-bottom));
+  transform:translateX(-50%) translateY(8px);z-index:120;
+  background:rgba(30,35,44,.96);border:1px solid var(--line);color:var(--text);
+  padding:9px 16px;border-radius:20px;font-size:13px;max-width:80vw;text-align:center;
+  opacity:0;transition:opacity .2s,transform .2s;pointer-events:none;
+}
+.toast.on{opacity:1;transform:translateX(-50%) translateY(0)}

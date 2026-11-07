@@ -233,7 +233,11 @@
 
   /* ---------------- 对外 ---------------- */
 
+  /* 记住用户选的档位和位置：静默刷新会重建图表，不记住就会跳回默认的 120 */
+  const lastView = { bars: 120, offset: 0 };
+
   function render(container, k, ind) {
+    const active = lastView.bars;
     container.innerHTML = `
       <div class="chart-hd">
         <div class="chart-legend">
@@ -242,21 +246,31 @@
           <span style="color:${COL.ma60}">MA60</span>
         </div>
         <div class="chart-presets">
-          ${PRESETS.map(n => `<button data-bars="${n}"${n === 120 ? ' class="on"' : ''}>${n}</button>`).join('')}
+          ${PRESETS.map(n => `<button data-bars="${n}"${n === active ? ' class="on"' : ''}>${n}</button>`).join('')}
         </div>
       </div>
       <canvas class="kchart"></canvas>`;
     const canvas = container.querySelector('canvas');
     const st = mount(canvas, k, ind);
+    st.bars = active;
+    st.offset = Math.min(lastView.offset, Math.max(0, st.n - 10));
+    st.draw();
+
     container.querySelectorAll('[data-bars]').forEach(btn => {
       btn.onclick = () => {
         container.querySelectorAll('[data-bars]').forEach(b => b.classList.remove('on'));
         btn.classList.add('on');
         st.bars = +btn.dataset.bars;
         st.offset = 0;
+        lastView.bars = st.bars;
+        lastView.offset = 0;
         st.draw();
       };
     });
+    // 拖动后同步记住位置
+    const sync = () => { lastView.offset = st.offset; };
+    canvas.addEventListener('touchend', sync, { passive: true });
+    canvas.addEventListener('mouseup', sync);
     return st;
   }
 
