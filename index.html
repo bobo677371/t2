@@ -1,0 +1,157 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="T2">
+<meta name="theme-color" content="#0e1116">
+<meta name="format-detection" content="telephone=no">
+<title>T2 · 技术面</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="stylesheet" href="style.css?v=v11">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="searchwrap">
+    <input id="q" type="search" placeholder="代码 / 中文 / 拼音"
+           autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+    <button id="clr" class="clr" aria-label="清空">✕</button>
+  </div>
+  <div id="suggest" class="suggest" hidden></div>
+</header>
+
+<main id="main">
+  <section class="empty" id="boot">
+    <div class="spinner"></div>
+    <p>启动中…</p>
+  </section>
+</main>
+
+<div id="sheet" class="sheet" hidden>
+  <div class="sheet-bd"></div>
+  <div class="sheet-panel"></div>
+</div>
+
+<div id="errbar" class="errbar" hidden>
+  <div class="errhead">
+    <span id="errtitle">页面问题</span>
+    <span class="errbtns">
+      <button id="errcopy" type="button">复制</button>
+      <button id="errclose" type="button">✕</button>
+    </span>
+  </div>
+  <div id="errlist"></div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<noscript><p style="padding:20px;color:#ffb020">需要启用 JavaScript</p></noscript>
+
+<script>
+/* ============================================================
+ * 全局错误浮层
+ *
+ * 分类处理：
+ *   1. 脚本加载失败  —— e.target 是 <script>
+ *   2. 外部脚本异常  —— 浏览器返回 "Script error."（跨域脱敏），
+ *                       本应用所有脚本都是同源的，出现这类几乎可以
+ *                       确定是浏览器插件 / VPN / 内容拦截器注入的脚本
+ *   3. 本应用异常    —— 带文件名和行号
+ * ============================================================ */
+(function () {
+  var bar = document.getElementById('errbar');
+  var list = document.getElementById('errlist');
+  var title = document.getElementById('errtitle');
+  var lines = [];
+  var n = 0;
+
+  function fmt(v) { return v == null ? '' : String(v); }
+
+  function add(tag, main, detail) {
+    if (n++ >= 6) return;
+    var row = document.createElement('div');
+    row.className = 'errline' + (tag === '外部' ? ' ext' : '');
+    var b = document.createElement('b');
+    b.textContent = tag ? '[' + tag + '] ' : '';
+    row.appendChild(b);
+    row.appendChild(document.createTextNode(main));
+    if (detail) {
+      var d = document.createElement('div');
+      d.className = 'errdet';
+      d.textContent = detail;
+      row.appendChild(d);
+    }
+    list.appendChild(row);
+    lines.push('[' + tag + '] ' + main + (detail ? ' @' + detail : ''));
+    bar.hidden = false;
+  }
+
+  document.getElementById('errclose').onclick = function () { bar.hidden = true; };
+  document.getElementById('errcopy').onclick = function () {
+    var text = lines.join('\n') + '\nUA: ' + navigator.userAgent + '\nURL: ' + location.href;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text);
+      } else {
+        var ta = document.createElement('textarea');
+        ta.value = text; document.body.appendChild(ta); ta.select();
+        document.execCommand('copy'); document.body.removeChild(ta);
+      }
+      var btn = document.getElementById('errcopy');
+      btn.textContent = '已复制'; setTimeout(function () { btn.textContent = '复制'; }, 1500);
+    } catch (e) { /* 忽略 */ }
+  };
+
+  window.addEventListener('error', function (e) {
+    var t = e.target;
+    if (t && t.tagName === 'SCRIPT') {
+      add('加载失败', '脚本没能下载：' + fmt(t.src).replace(location.origin, ''));
+      return;
+    }
+    var msg = fmt(e.message);
+    var src = fmt(e.filename);
+    var where = src ? src.replace(location.origin + '/', '') + ':' + fmt(e.lineno) + ':' + fmt(e.colno) : '';
+    if (/^script error\.?$/i.test(msg) || (!msg && !src)) {
+      add('外部', '浏览器拦截到的跨域脚本异常（本应用没有外部脚本）',
+          '通常来自广告拦截 / 翻译 / VPN / 浏览器扩展，不影响功能');
+    } else {
+      add('应用', msg || '未知错误', where);
+      title.textContent = '应用出错';
+    }
+  }, true);
+
+  window.addEventListener('unhandledrejection', function (e) {
+    var r = e.reason;
+    var msg = (r && r.message) || fmt(r) || '未处理的 Promise 拒绝';
+    if (/^script error\.?$/i.test(msg)) {
+      add('外部', '收到一条跨域脚本的拒绝，来源同上传');
+    } else {
+      add('应用', msg);
+      title.textContent = '应用出错';
+    }
+  });
+
+  /* Service Worker */
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
+        .catch(function (err) { console.warn('[T2] SW 注册失败', err); });
+    });
+  }
+})();
+</script>
+
+<script src="app.js?v=v11"></script>
+<script src="chart.js?v=v11"></script>
+<script src="ui.js?v=v11"></script>
+</body>
+</html>
+
+
+
