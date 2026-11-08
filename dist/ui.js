@@ -1,4 +1,4 @@
-﻿/* ui.js — 界面渲染
+/* ui.js — 界面渲染
  * 只负责把 app.js 算好的东西画出来，不做任何计算
  */
 (function () {
@@ -147,8 +147,9 @@
       const flags = T2.computePatterns(k, d);
       const state = T2.computeState(k, d);
       const baseline = await T2.loadBaseline();
+      const screen = await T2.loadScreen();
       const h = T2.health(k, d, flags, baseline);
-      current = { sym, k, d, state, h, flags };
+      current = { sym, k, d, state, h, flags, screen };
       lastLoadAt = Date.now();
       render();
       if (silent) window.scrollTo(0, keepY);
@@ -157,7 +158,7 @@
       if (silent) {
         toast('刷新失败：' + err.message);
       } else {
-        main.innerHTML = `<div class="err">加载失败：${esc(err.message)}<br><br>检查网络后重试</div>`;
+    main.innerHTML = `<div class="err">加载失败：${esc(err.message)}<br><br>检查网络后重试</div>`;
       }
     } finally {
       busy = false;
@@ -295,6 +296,80 @@
     /** 次日上涨率：高于基准标红字，低于基准标绿字，一眼看出方向 */
     const rateCls = (p) => p.upRate > p.baseRate ? 'rate-hi' : p.upRate < p.baseRate ? 'rate-lo' : '';
 
+    /** 今日信号：全市场扫盘命中的票（含板块、基本面、集中度） */
+    const screenHTML = () => {
+      const sc = current.screen;
+      if (!sc || !Array.isArray(sc.rows)) return '';
+      const rows = sc.rows;
+      if (!rows.length) {
+        return `<section class="card">
+          <h2>今日信号 <span class="pnum">0 只</span></h2>
+          <div class="muted">全市场扫描 ${sc.scanned} 只，今天没有票命中已验证组合</div>
+        </section>`;
+      }
+
+      // 两条风险提示：板块集中度 + 板块本身在跌
+      const secArr = Array.isArray(sc.sectors) ? sc.sectors : [];
+      const top = secArr[0];
+      const top3Pct = secArr.slice(0, 3).reduce((a, s) => a + (s.pct || 0), 0);
+      const concentrated = top && sc.hits >= 5 && (top.pct >= 20 || top3Pct >= 45);
+      const deepDown = rows.filter(r => Number.isFinite(r.indR20) && r.indR20 < -12);
+      const secFalling = rows.length >= 5 && deepDown.length / rows.length >= 0.5;
+
+      const warnHTML = (concentrated || secFalling) ? `<div class="sigwarn">
+        ${concentrated ? `⚠️ <b>板块高度集中</b>：${sc.hits} 只里 ${top.n} 只属于「${esc(top.name)}」（${top.pct}%），前三个板块合计 ${top3Pct}%。<br>
+          <span class="sw-sub">这些票同涨同跌，<b>买 5 只和买 1 只的风险差不多</b>，不是分散投资。</span><br>` : ''}
+        ${secFalling ? `⚠️ <b>板块本身在跌</b>：${deepDown.length}/${rows.length} 只的所属板块近 20 日跌超 12%。<br>
+          <span class="sw-sub">这不是"个股超跌"，是整个赛道在崩。均值回归的前提是板块还在，这里的前提可能不成立。</span>` : ''}
+      </div>` : '';
+
+      // 板块分布条
+      const sectorHTML = Array.isArray(sc.sectors) && sc.sectors.length
+        ? `<div class="seclist">${sc.sectors.slice(0, 6).map(s => {
+            const down = Number.isFinite(s.r20) && s.r20 < -10;
+            return `<span class="secbar ${down ? 'sec-down' : ''}">
+              <b>${esc(s.name)}</b> ${s.n}只 ${s.pct}%
+              ${Number.isFinite(s.r20) ? `<i>板块20日 ${s.r20 >= 0 ? '+' : ''}${s.r20}%</i>` : ''}
+            </span>`;
+          }).join('')}</div>`
+        : '';
+
+      const rowHTML2 = (r) => {
+        const secDown = Number.isFinite(r.indR20) && r.indR20 < -12;
+        const peTxt = Number.isFinite(r.pe) ? `PE ${r.pe}` : '';
+        const capTxt = Number.isFinite(r.cap) ? `市值 ${r.cap}亿` : '';
+        return `<div class="sig" data-m="${r.m}" data-c="${esc(r.c)}">
+          <div class="s1">
+            <span class="snm">${esc(r.n)}</span>
+            <span class="scd">${esc(r.c)}</span>
+            <span class="schg ${r.chg >= 0 ? 'up' : 'down'}">${r.chg >= 0 ? '+' : ''}${Number(r.chg).toFixed(2)}%</span>
+          </div>
+          <div class="s2">
+            <span class="scmb">${esc(r.combo)}</span>
+            <span class="sv">${r.val}%</span>
+            <span class="ssrc ${r.src === 'D' ? 'src-d' : 'src-v'}">${r.src === 'D' ? '样本外' : '样本内'}</span>
+          </div>
+          <div class="s3">
+            <span class="sind ${secDown ? 'ind-down' : ''}">${esc(r.ind || '—')}${Number.isFinite(r.indR20) ? ` · 板块20日 ${r.indR20 >= 0 ? '+' : ''}${r.indR20}%` : ''}</span>
+            <span class="sfund">${peTxt}${peTxt && capTxt ? ' · ' : ''}${capTxt}</span>
+          </div>
+        </div>`;
+      };
+
+      return `<section class="card">
+        <h2>今日信号 <span class="pnum">${sc.hits} 只 · 扫描 ${sc.scanned} 只</span></h2>
+        ${warnHTML}
+        <div class="note" style="padding-top:0;padding-bottom:6px">
+          已剔除亏损、PE 异常、市值 &lt;30 亿、ROE≤0 的票；
+          且收盘价必须高于 <b>20 日最低 3% 以上</b>（避免在还在创新低的下跌中继里买）。
+        </div>
+        ${sectorHTML}
+        <div class="siglist">${rows.slice(0, 40).map(rowHTML2).join('')}</div>
+        <div class="note">扫描于 ${sc.at ? String(sc.at).slice(0, 16).replace('T', ' ') : '—'} ·
+          下跌 ${sc.drop || '—'} 只 → 过基本面 ${sc.fund || '—'} 只 → 命中 ${sc.hits} 只</div>
+      </section>`;
+    };
+
     main.innerHTML = `
 <section class="card quote">
   <div class="name">
@@ -307,6 +382,8 @@
   </div>
   <div class="meta">${esc(state.date)} · 成交 ${fmtAmt(state.amount)} · 共 ${k.close.length} 根日线 · 更新于 ${hhmm(lastLoadAt)}</div>
 </section>
+
+${screenHTML()}
 
 <section class="card chart-card">
   <h2>日 K</h2>
@@ -480,7 +557,11 @@ ${comboHTML()}
   /* 点击形态行 -> 打开详情 */
   main.addEventListener('click', e => {
     const row = e.target.closest('.prow[data-pid]');
-    if (row) openDetail(row.dataset.pid);
+    if (row) { openDetail(row.dataset.pid); return; }
+    const sig = e.target.closest('.sig[data-c]');
+    if (sig) {
+      load({ market: +sig.dataset.m, code: sig.dataset.c, kind: 's', name: '' });
+    }
   });
 
   /* ---------------- 启动 ---------------- */
@@ -495,6 +576,12 @@ ${comboHTML()}
     load(sym);
   })();
 })();
+
+
+
+
+
+
 
 
 

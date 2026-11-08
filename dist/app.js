@@ -794,6 +794,22 @@
     return _basePromise;
   }
 
+  /* ---------------------------------------------------------------- 全市场扫描结果
+   * screen.json 由 build_screen.js 预生成（收盘后跑一次）。
+   * 手机上只做展示，不发起任何全市场请求。
+   */
+  let _SCREEN = null, _screenP = null;
+
+  function loadScreen(url = 'screen.json') {
+    if (_SCREEN) return Promise.resolve(_SCREEN);
+    if (_screenP) return _screenP;
+    _screenP = fetch(url, { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : null)
+      .then(j => { _SCREEN = j || null; return _SCREEN; })
+      .catch(() => { _SCREEN = null; return null; });
+    return _screenP;
+  }
+
   /* ---------------------------------------------------------------- 组合统计
    * 给定若干形态 id，统计它们「同时成立」时的 1/5/20 日表现。
    * 只用于评估「今天同时触发的这几个形态」在历史上意味着什么。
@@ -881,9 +897,10 @@
     // 数据
     fetchKline, fqtFor,
     // 计算
-    computeIndicators, computePatterns, health, computeState, loadBaseline,
+    computeIndicators, computePatterns, health, computeState, loadBaseline, loadScreen,
     comboStats, activeToday,
     getIndex: () => INDEX,
   };
 })(window);
+
 

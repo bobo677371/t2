@@ -217,3 +217,34 @@ main{padding:12px}
 .prow2 .l3 .pnum{font-size:11.5px}
 .prow2 .l3 .hcell{font-size:11.5px}
 .sh-mkt{background:var(--panel2);border-radius:9px;padding:9px 12px;font-size:12px;color:var(--dim);line-height:1.7;margin-bottom:12px}
+
+/* ---------------- 今日信号 ---------------- */
+.siglist{display:flex;flex-direction:column;gap:1px}
+.sig{padding:9px 2px;border-bottom:1px solid var(--line);cursor:pointer}
+.sig:last-child{border-bottom:none}
+.sig:active{background:var(--panel2)}
+.sig .s1{display:flex;align-items:baseline;gap:8px}
+.sig .snm{font-size:14px;font-weight:500;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sig .scd{font-size:11.5px;color:#5c6572;font-variant-numeric:tabular-nums}
+.sig .schg{font-size:13px;font-variant-numeric:tabular-nums;min-width:58px;text-align:right}
+.sig .s2{display:flex;align-items:center;gap:8px;margin-top:2px;font-size:11.5px}
+.sig .scmb{flex:1;min-width:0;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sig .sv{color:var(--text);font-variant-numeric:tabular-nums}
+.sig .ssrc{font-size:10px;padding:1px 5px;border-radius:4px;border:1px solid var(--line)}
+.sig .ssrc.src-v{color:var(--warn);border-color:#4a3a1a;background:#1f1a0f}
+.sig .ssrc.src-d{color:#8ab4ff;border-color:#2d4470;background:#141c2e}
+
+/* ---------------- 选股：板块与基本面 ---------------- */
+.sigwarn{background:#2a1e10;border:1px solid #5a4520;border-radius:9px;padding:9px 11px;font-size:12px;line-height:1.65;color:#ffc65c;margin-bottom:10px}
+.seclist{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.secbar{font-size:11px;color:var(--dim);background:var(--panel2);border-radius:6px;padding:4px 7px;line-height:1.4}
+.secbar b{color:var(--text);font-weight:600}
+.secbar i{font-style:normal;color:#5c6572;margin-left:4px}
+.secbar.sec-down{border:1px solid #4a2020}
+.secbar.sec-down i{color:var(--down)}
+.sig .s3{display:flex;align-items:center;gap:8px;margin-top:3px;font-size:11px;color:#5c6572}
+.sig .sind{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sig .sind.ind-down{color:var(--down)}
+.sig .sfund{font-variant-numeric:tabular-nums;white-space:nowrap}
+.sigwarn .sw-sub{color:#a8916a;font-size:11.5px}
+
