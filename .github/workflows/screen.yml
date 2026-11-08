@@ -1,0 +1,53 @@
+name: 每日选股
+on:
+  schedule:
+    - cron: '10 8 * * 1-5'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: daily-screen
+  cancel-in-progress: false
+jobs:
+  screen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: 确认文件
+        run: |
+          test -f tools/build_screen.js || { echo "::error::缺少 tools/build_screen.js"; exit 1; }
+          test -f dist/app.js || { echo "::error::缺少 dist/app.js"; exit 1; }
+      - name: 跑扫描
+        env:
+          SCREEN_OUT: dist/screen.json
+        run: node tools/build_screen.js 1500
+      - name: 校验
+        run: |
+          node -e '
+            const s = JSON.parse(require("fs").readFileSync("dist/screen.json","utf8"));
+            console.log(`扫描 ${s.scanned} 只，命中 ${s.hits}`);
+            if (!s.scanned || s.scanned < 3000) {
+              console.error("::error::只拿到 "+(s.scanned||0)+" 只，接口不可达，不提交");
+              process.exit(1);
+            }
+          '
+      - name: 提交
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dist/screen.json
+          if git diff --staged --quiet; then echo "无变化"; else
+            git commit -m "chore: 每日选股 $(date -u +%Y-%m-%d) [skip ci]"
+            git push
+          fi
+      - name: 摘要
+        run: |
+          node -e '
+            const s = require("./dist/screen.json");
+            console.log("\n=== 今日信号 " + s.hits + " 只 ===");
+            s.rows.slice(0,15).forEach(r => console.log(`  ${r.c} ${r.n||""} ${r.chg}% ${r.combo} ${r.val}%`));
+          '
