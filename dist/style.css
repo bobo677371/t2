@@ -180,3 +180,40 @@ main{padding:12px}
   opacity:0;transition:opacity .2s,transform .2s;pointer-events:none;
 }
 .toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* ---------------- 多周期行 + 组合检查 ---------------- */
+.prow2{padding:9px 2px;border-bottom:1px solid var(--line)}
+.prow2:last-child{border-bottom:none}
+.prow2 .l1{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.prow2 .l2{display:flex;align-items:center;gap:10px;margin-top:3px;flex-wrap:wrap}
+.prow2 .pn{font-size:14px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hcell{font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums;white-space:nowrap}
+.hcell i{font-style:normal;color:#5c6572;margin-right:3px;font-size:11px}
+.hcell.rate-hi{color:var(--up)}
+.hcell.rate-lo{color:var(--down)}
+.prow2 .pnum{font-size:12px;color:var(--dim)}
+
+.combolist{display:flex;flex-direction:column;gap:10px}
+.combo{background:var(--panel2);border-radius:9px;padding:10px 12px}
+.combo .c1{font-size:14px;font-weight:500;margin-bottom:4px}
+.combo .c2{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:5px}
+.combo .c3{font-size:11.5px;color:#5c6572;line-height:1.5}
+.combo .c3.gain-hi{color:var(--up)}
+.combo .c3.gain-lo{color:var(--down)}
+
+/* 详情弹层里的多周期表 */
+.hztable{margin:0 0 14px;background:var(--panel2);border-radius:9px;overflow:hidden}
+.hztable .hzhead,.hztable .hzrow{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;padding:7px 12px;font-size:12.5px;font-variant-numeric:tabular-nums}
+.hztable .hzhead{color:#5c6572;font-size:11px;border-bottom:1px solid var(--line)}
+.hztable .hzrow{border-bottom:1px solid rgba(255,255,255,.03)}
+.hztable .hzrow:last-child{border-bottom:none}
+.hztable .hzrow span{color:var(--dim)}
+.hztable .hzrow b{text-align:right;font-weight:600}
+.hztable .hzhead span:not(:first-child){text-align:right}
+
+/* 本票 / 全市场 两行对照 */
+.prow2 .lbl{font-size:11px;color:#5c6572;min-width:38px;flex:none}
+.prow2 .l3{display:flex;align-items:center;gap:10px;margin-top:2px;flex-wrap:wrap;opacity:.75}
+.prow2 .l3 .pnum{font-size:11.5px}
+.prow2 .l3 .hcell{font-size:11.5px}
+.sh-mkt{background:var(--panel2);border-radius:9px;padding:9px 12px;font-size:12px;color:var(--dim);line-height:1.7;margin-bottom:12px}

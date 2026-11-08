@@ -1,4 +1,4 @@
-/* ==========================================================================
+﻿/* ==========================================================================
  * T2 · 大盘技术面小工具
  * app.js — 取数 + 指标 + 形态 + 五维状态 + 体检引擎
  *
@@ -550,6 +550,35 @@
       return !prevOk(i - 1);
     });
 
+  /* --- 背离 (2) --- */
+
+  /* 当前创 N 日新低/新高，但 DIF 没有跟着创新低/新高 */
+  function _diverge(k, d, i, bullish, N = 20) {
+    if (i < 2 * N + 5) return false;
+    const c = k.close[i];
+    let ext = bullish ? Infinity : -Infinity;
+    for (let j = i - N + 1; j <= i; j++) {
+      const v = k.close[j];
+      if (bullish ? v < ext : v > ext) ext = v;
+    }
+    if (bullish ? c > ext + 1e-9 : c < ext - 1e-9) return false;   // 必须就是极值
+    let pv = bullish ? Infinity : -Infinity, pi = -1;
+    for (let j = i - 2 * N + 1; j <= i - N; j++) {
+      const v = k.close[j];
+      if (bullish ? v < pv : v > pv) { pv = v; pi = j; }
+    }
+    if (pi < 0) return false;
+    const a = d.dif[i], b = d.dif[pi];
+    if (!isNum(a) || !isNum(b)) return false;
+    return bullish ? a > b : a < b;
+  }
+
+  def('bottom_div', '底背离', 'm', '收盘创 20 日新低，但 DIF 高于上一次 20 日低点的 DIF',
+    (k, d, i) => _diverge(k, d, i, true));
+
+  def('top_div', '顶背离', 'm', '收盘创 20 日新高，但 DIF 低于上一次 20 日高点的 DIF',
+    (k, d, i) => _diverge(k, d, i, false));
+
   /* --- 指标 (4) --- */
   def('macd_gold', 'MACD 金叉', 'm', 'DIF 由下向上穿越 DEA',
     (k, d, i) => i > 0 && isNum(d.dif[i]) && isNum(d.dea[i]) && isNum(d.dif[i - 1]) && isNum(d.dea[i - 1]) &&
@@ -583,6 +612,16 @@
       return Math.abs(k.close[i] - k.high[i]) < 1e-6 && chg >= lim - 0.002 && d.vr[i] < 0.8;
     }, ['s']);
 
+  def('yi_zi_ban', '一字板', 'a', '开盘即封死涨停，全天最高=最低=收盘（仅个股）。振幅为 0，其他 K 线形态都不计入',
+    (k, d, i) => {
+      if (i < 1) return false;
+      const lim = limitRate(k.code || '');
+      const chg = k.close[i] / k.close[i - 1] - 1;
+      return (k.high[i] - k.low[i]) <= Math.abs(k.close[i]) * 1e-6
+        && chg >= lim - 0.002
+        && k.amount[i] > 0;
+    }, ['s']);
+
   def('strong_close', '强势收盘', 'a', '收盘位于当日区间上部 20% 且当日上涨（尾盘拉升的日线代理）',
     (k, d, i) => {
       const r = rng(k, i);
@@ -614,18 +653,33 @@
     // 指标
     macd_gold: 'bull', macd_dead: 'bear',
     rsi_ob: 'bear', rsi_os: 'bull',
+    bottom_div: 'bull', top_div: 'bear',
     // A 股特色
-    limit_up_shrink: 'bull', strong_close: 'bull',
+    limit_up_shrink: 'bull', yi_zi_ban: 'bull', strong_close: 'bull',
   };
 
   /* --- 计算全历史触发 --- */
+
+  /* 这些形态要靠"实体/影线/振幅"判断，振幅为 0 的日子（一字板、停牌）
+   * 会让 body=0、rng≈1e-9，于是 `lower >= 2*body`、`body/rng <= 0.35`
+   * 这类条件在 `0 >= 0`、`0 <= 0.35` 下全部恒成立，被误判成锤头线/十字星/倒锤头。
+   * 所以必须在这些形态上显式要求"当日有真实振幅"。 */
+  const NEEDS_RANGE = new Set([
+    'marubozu', 'hammer', 'inv_hammer', 'doji', 'long_lower', 'long_upper',
+    'big_yang', 'big_yin', 'bull_engulf', 'bear_engulf', 'harami',
+  ]);
 
   function computePatterns(k, d) {
     const n = k.close.length;
     const flags = {};
     for (const p of P) {
       const arr = new Uint8Array(n);
+      const needRange = NEEDS_RANGE.has(p.id);
       for (let i = 0; i < n; i++) {
+        if (needRange) {
+          const rng = k.high[i] - k.low[i];
+          if (!(rng > Math.abs(k.close[i]) * 1e-6)) { arr[i] = 0; continue; }
+        }
         try { arr[i] = p.fn(k, d, i) ? 1 : 0; } catch (e) { arr[i] = 0; }
       }
       flags[p.id] = arr;
@@ -639,20 +693,35 @@
    * 对每个形态统计：触发次数、次日上涨率、基准、z、5日/10日平均收益、结论
    * 只用 HEALTH_FROM 之后的数据，且前向收益不得越过数组末尾
    */
-  function health(k, d, flags) {
+  function health(k, d, flags, baseline) {
     const n = k.close.length;
     const startIdx = (() => {
       for (let i = 0; i < n; i++) if (k.date[i] >= HEALTH_FROM) return i;
       return 0;
     })();
 
-    // 基准：区间内无条件次日上涨率
-    let baseUp = 0, baseN = 0;
-    for (let i = startIdx; i < n - 1; i++) {
-      baseN++;
-      if (k.close[i + 1] > k.close[i]) baseUp++;
-    }
-    const baseRate = baseN ? baseUp / baseN : NaN;
+    // 基准：三个周期的无条件上涨率
+    // 为什么必须看多周期：趋势类形态的效应在 1 日尺度上完全看不出来
+    //（实测「MACD金叉+缩量涨」1日 49.4% 像没用的，20日 53.9%，基准 48.4%）
+    const HZ = [1, 5, 20];
+    const stat = (pick) => {
+      const o = { n: 0 };
+      for (const h of HZ) o[h] = { up: 0, den: 0 };
+      for (let i = startIdx; i < n - 1; i++) {
+        if (pick && !pick(i)) continue;
+        o.n++;
+        for (const h of HZ) {
+          if (i + h >= n) continue;
+          o[h].den++;
+          if (k.close[i + h] > k.close[i]) o[h].up++;
+        }
+      }
+      return o;
+    };
+    const baseStat = stat(null);
+    const baseRate = baseStat[1].den ? baseStat[1].up / baseStat[1].den : NaN;
+    const base5 = baseStat[5].den ? baseStat[5].up / baseStat[5].den : NaN;
+    const base20 = baseStat[20].den ? baseStat[20].up / baseStat[20].den : NaN;
 
     const out = [];
     for (const p of P) {
@@ -661,40 +730,98 @@
         continue;
       }
       const f = flags[p.id];
-      let cnt = 0, up = 0, f5 = [], f10 = [];
-      for (let i = startIdx; i < n - 1; i++) {
-        if (!f[i]) continue;
-        cnt++;
-        if (k.close[i + 1] > k.close[i]) up++;
-        if (i + 5 < n) f5.push(k.close[i + 5] / k.close[i] - 1);
-        if (i + 10 < n) f10.push(k.close[i + 10] / k.close[i] - 1);
-      }
+      const s = stat(i => !!f[i]);
+      const cnt = s.n;
+      const r = h => s[h].den ? s[h].up / s[h].den : NaN;
+
       // 最近 10 次触发：从末尾往前扫（正序收集再截断会拿到最早的 10 次）
       const hitIdx = [];
       for (let i = n - 2; i >= startIdx && hitIdx.length < 10; i--) {
         if (f[i]) hitIdx.push(i);
       }
-      const upRate = cnt ? up / cnt : NaN;
-      const se = cnt ? Math.sqrt(baseRate * (1 - baseRate) / cnt) : NaN;
-      const z = cnt ? (upRate - baseRate) / se : NaN;
-      const avg = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : NaN;
 
+      const upRate = r(1), up5 = r(5), up20 = r(20);
+      const se20 = s[20].den ? Math.sqrt(base20 * (1 - base20) / s[20].den) : NaN;
+      const z20 = s[20].den ? (up20 - base20) / se20 : NaN;
+      const se1 = s[1].den ? Math.sqrt(baseRate * (1 - baseRate) / s[1].den) : NaN;
+      const z = s[1].den ? (upRate - baseRate) / se1 : NaN;
+
+      // 判定改用 20 日口径（趋势的主要观察周期）
+      const nEff = s[20].den;
       let verdict;
-      if (cnt < MIN_N) verdict = 'low_n';
-      else if (Math.abs(z) < 1.96) verdict = 'same';
-      else if (Math.abs(z) >= BONFERRONI_Z) verdict = 'strong';
+      if (nEff < MIN_N) verdict = 'low_n';
+      else if (Math.abs(z20) < 1.96) verdict = 'same';
+      else if (Math.abs(z20) >= BONFERRONI_Z) verdict = 'strong';
       else verdict = 'weak';
 
       out.push({
         id: p.id, name: p.name, cat: p.cat, desc: p.desc,
         dir: DIR[p.id] || 'neutral',
-        applies: true, n: cnt, upRate, baseRate, delta: upRate - baseRate, z,
-        fwd5: avg(f5), fwd10: avg(f10), verdict,
+        applies: true, n: cnt,
+        upRate, up5, up20,
+        baseRate, base5, base20,
+        delta: up20 - base20, z, z20,
+        fwd5: NaN, fwd10: NaN,
+        verdict,
         lastHits: hitIdx,          // 已是从新到旧，不要再 reverse
         triggersToday: n > 0 ? !!f[n - 1] : false,
+        mkt: (baseline && baseline.p && baseline.p[p.id]) ? {
+          n: baseline.p[p.id].n,
+          u1: baseline.p[p.id].u1, u5: baseline.p[p.id].u5, u20: baseline.p[p.id].u20,
+        } : null,
       });
     }
-    return { baseRate, baseN, startIdx, list: out };
+    return {
+      baseRate, base5, base20, baseN: baseStat[1].den, startIdx, list: out,
+      mktBase: (baseline && baseline.base) ? baseline.base : null,
+      mktStocks: baseline ? baseline.stocks : null,
+    };
+  }
+
+  /* ---------------------------------------------------------------- 全市场基线
+   * baseline.json 由 build_baseline.js 预生成：同一形态在全市场 233 只股票上的
+   * 平均表现。作用是给"本票"的数字一个参照系——60.8% 到底是这票特别，还是所有票都这样。
+   */
+  let _BASE = null, _basePromise = null;
+
+  function loadBaseline(url = 'baseline.json') {
+    if (_BASE) return Promise.resolve(_BASE);
+    if (_basePromise) return _basePromise;
+    _basePromise = fetch(url, { cache: 'force-cache' })
+      .then(r => r.ok ? r.json() : null)
+      .then(j => { _BASE = j || null; return _BASE; })
+      .catch(() => { _BASE = null; return null; });
+    return _basePromise;
+  }
+
+  /* ---------------------------------------------------------------- 组合统计
+   * 给定若干形态 id，统计它们「同时成立」时的 1/5/20 日表现。
+   * 只用于评估「今天同时触发的这几个形态」在历史上意味着什么。
+   */
+  function comboStats(k, flags, startIdx, ids) {
+    const n = k.close.length;
+    const o = { n: 0, 1: { up: 0, den: 0 }, 5: { up: 0, den: 0 }, 20: { up: 0, den: 0 } };
+    if (!ids || !ids.length) return o;
+    for (let i = startIdx; i < n - 1; i++) {
+      let ok = true;
+      for (const id of ids) if (!flags[id] || !flags[id][i]) { ok = false; break; }
+      if (!ok) continue;
+      o.n++;
+      for (const h of [1, 5, 20]) {
+        if (i + h >= n) continue;
+        o[h].den++;
+        if (k.close[i + h] > k.close[i]) o[h].up++;
+      }
+    }
+    return o;
+  }
+
+  /** 今天触发了哪些形态（按形态库顺序） */
+  function activeToday(k, flags) {
+    const i = k.close.length - 1;
+    const ids = [];
+    for (const p of P) if (flags[p.id] && flags[p.id][i]) ids.push(p.id);
+    return ids;
   }
 
   /* ---------------------------------------------------------------- 五维状态 */
@@ -754,7 +881,9 @@
     // 数据
     fetchKline, fqtFor,
     // 计算
-    computeIndicators, computePatterns, health, computeState,
+    computeIndicators, computePatterns, health, computeState, loadBaseline,
+    comboStats, activeToday,
     getIndex: () => INDEX,
   };
 })(window);
+

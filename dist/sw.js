@@ -8,7 +8,7 @@
  *
  * 改版本号即可让旧缓存失效。
  */
-const VERSION = 'v8';
+const VERSION = 'v11';
 const CACHE = 't2-' + VERSION;
 
 const SHELL = [
@@ -19,6 +19,7 @@ const SHELL = [
   './chart.js?v=' + VERSION,
   './ui.js?v=' + VERSION,
   './manifest.json',
+  './baseline.json',
   './icons/apple-touch-icon.png',
   './icons/icon-192.png',
   './icons/icon-512.png',
@@ -80,6 +81,10 @@ self.addEventListener('fetch', e => {
       }))
   );
 });
+
+
+
+
 
 
 

@@ -1,4 +1,4 @@
-/* ui.js — 界面渲染
+﻿/* ui.js — 界面渲染
  * 只负责把 app.js 算好的东西画出来，不做任何计算
  */
 (function () {
@@ -146,8 +146,9 @@
       const d = T2.computeIndicators(k);
       const flags = T2.computePatterns(k, d);
       const state = T2.computeState(k, d);
-      const h = T2.health(k, d, flags);
-      current = { sym, k, d, state, h };
+      const baseline = await T2.loadBaseline();
+      const h = T2.health(k, d, flags, baseline);
+      current = { sym, k, d, state, h, flags };
       lastLoadAt = Date.now();
       render();
       if (silent) window.scrollTo(0, keepY);
@@ -213,11 +214,83 @@
       ['波动', VOLATILITY[state.volatility], `20日年化 ${fmtPct(current.d.rv20[last])}`],
     ];
 
-    // 体检榜单：只显示有统计意义的，按 |z| 排
+    // 体检榜单：按 20 日 z 排序
     const ranked = h.list
-      .filter(p => p.applies && Number.isFinite(p.z))
-      .sort((a, b) => Math.abs(b.z) - Math.abs(a.z))
-      .slice(0, 12);
+      .filter(p => p.applies && Number.isFinite(p.z20))
+      .sort((a, b) => Math.abs(b.z20) - Math.abs(a.z20))
+      .slice(0, 14);
+
+    /** 一行形态：第一行名字+结论，第二行 n 与三个周期 */
+    const rowHTML = (p) => {
+      const v = VERDICT[p.verdict] || ['—', ''];
+      const c20 = p.up20 > p.base20 + 0.01 ? 'rate-hi' : p.up20 < p.base20 - 0.01 ? 'rate-lo' : '';
+      const mkt = p.mkt ? `<div class="l3">
+          <span class="lbl">全市场</span>
+          <span class="pnum">n=${p.mkt.n}</span>
+          <span class="hcell"><i>1日</i>${fmtPct(p.mkt.u1)}</span>
+          <span class="hcell"><i>5日</i>${fmtPct(p.mkt.u5)}</span>
+          <span class="hcell"><i>20日</i>${fmtPct(p.mkt.u20)}</span>
+        </div>` : '';
+      return `<div class="prow2" data-pid="${p.id}">
+        <div class="l1">
+          <span class="pn ${dirCls(p)}">${dirName(p)}</span>
+          <span class="badge ${v[1]}">${v[0]}</span>
+        </div>
+        <div class="l2">
+          <span class="lbl">本票</span>
+          <span class="pnum">n=${p.n}</span>
+          <span class="hcell"><i>1日</i>${fmtPct(p.upRate)}</span>
+          <span class="hcell"><i>5日</i>${fmtPct(p.up5)}</span>
+          <span class="hcell ${c20}"><i>20日</i>${fmtPct(p.up20)}</span>
+        </div>
+        ${mkt}
+      </div>`;
+    };
+
+    /** 组合检查：今天同时触发的形态两两组合，看有没有超越最强成分 */
+    const comboHTML = () => {
+      const act = T2.activeToday(k, current.flags);
+      if (act.length < 2) return '';
+      const rows = [];
+      for (let a = 0; a < act.length; a++) {
+        for (let b = a + 1; b < act.length; b++) {
+          const A = act[a], B = act[b];
+          const st = T2.comboStats(k, current.flags, h.startIdx, [A, B]);
+          if (!st[20].den) continue;
+          const pa = h.list.find(x => x.id === A), pb = h.list.find(x => x.id === B);
+          const r20 = st[20].up / st[20].den;
+          const best = Math.max(pa ? pa.up20 : 0, pb ? pb.up20 : 0);
+          rows.push({
+            key: A + '|' + B,
+            name: (pa ? pa.name : A) + ' + ' + (pb ? pb.name : B),
+            n: st.n, r1: st[1].den ? st[1].up / st[1].den : NaN,
+            r5: st[5].den ? st[5].up / st[5].den : NaN,
+            r20, best, gain: r20 - best,
+          });
+        }
+      }
+      if (!rows.length) return '';
+      rows.sort((x, y) => y.gain - x.gain);
+      return `<section class="card">
+        <h2>组合检查 <span class="pnum">今天同时触发了 ${act.length} 个</span></h2>
+        <div class="note" style="padding-top:0;padding-bottom:8px">
+          组合真正的价值，在于它<b>比其中最强的那一个还强</b>。否则只是把强条件重说一遍。
+        </div>
+        <div class="combolist">${rows.map(r => {
+          const hi = r.gain > 0.03 ? 'gain-hi' : r.gain < -0.01 ? 'gain-lo' : '';
+          return `<div class="combo">
+            <div class="c1">${esc(r.name)}</div>
+            <div class="c2">
+              <span class="pnum">n=${r.n}</span>
+              <span class="hcell"><i>1日</i>${fmtPct(r.r1)}</span>
+              <span class="hcell"><i>5日</i>${fmtPct(r.r5)}</span>
+              <span class="hcell"><i>20日</i>${fmtPct(r.r20)}</span>
+            </div>
+            <div class="c3 ${hi}">最强成分 ${fmtPct(r.best)} · 提升 ${r.gain >= 0 ? '+' : ''}${(r.gain * 100).toFixed(1)}pp${r.gain > 0.03 ? ' ↑ 有增量' : ' — 无增量'}</div>
+          </div>`;
+        }).join('')}</div>
+      </section>`;
+    };
 
     /** 次日上涨率：高于基准标红字，低于基准标绿字，一眼看出方向 */
     const rateCls = (p) => p.upRate > p.baseRate ? 'rate-hi' : p.upRate < p.baseRate ? 'rate-lo' : '';
@@ -253,43 +326,29 @@
   <h2>今日触发 <span class="pnum">${triggered.length} 个</span></h2>
   ${triggered.length ? `<div class="legend">
       <span><b>n</b> 历史触发次数</span>
-      <span><b>次日涨</b> 触发后次日收涨的比例</span>
-      <span>基准 <b>${fmtPct(h.baseRate)}</b></span>
+      <span>数字是 <b>1日 / 5日 / 20日</b> 后收盘上涨的比例</span>
+      <span>基准 <b>${fmtPct(h.baseRate, 0)} / ${fmtPct(h.base5, 0)} / ${fmtPct(h.base20, 0)}</b></span>
     </div>
-    <div class="plist">${triggered.map(p => {
-      const v = VERDICT[p.verdict] || ['—', ''];
-      return `<div class="prow" data-pid="${p.id}"><span class="pn ${dirCls(p)}">${dirName(p)}</span>
-        <span class="pnum">n=${p.n}</span>
-        <span class="pnum ${rateCls(p)}">${fmtPct(p.upRate)}</span>
-        <span class="badge ${v[1]}">${v[0]}</span></div>`;
-    }).join('')}</div>`
+    <div class="plist">${triggered.map(rowHTML).join('')}</div>`
     : '<div class="muted">今天没有形态触发</div>'}
 </section>
+
+${comboHTML()}
 
 <section class="card">
   <h2>形态体检 <span class="pnum">区间 ${T2.HEALTH_FROM} 起</span></h2>
   <div class="legend">
-    <span><b>n</b> 历史触发次数</span>
-    <span><b>次日涨</b> 触发后次日收涨的比例</span>
-    <span>全样本基准 <b>${fmtPct(h.baseRate)}</b></span>
-    <span><b>z</b> 与基准的标准化偏离</span>
+    <span><b>本票</b>＝这只票自己的历史（每次点开都按当前标的重算）</span>
+    <span><b>全市场</b>＝同一形态在 ${h.mktStocks || 233} 只股票上的平均（参照系）</span>
+    <span>本票基准 <b>${fmtPct(h.baseRate, 0)} / ${fmtPct(h.base5, 0)} / ${fmtPct(h.base20, 0)}</b></span>
   </div>
   <div class="dirlegend">
     <span class="dir-bull"><i class="arw">▲</i>传统看多</span>
     <span class="dir-bear"><i class="arw">▼</i>传统看空</span>
     <span class="dir-neutral"><i class="arw">·</i>方向中性</span>
-    <span class="dl-note">名字颜色＝教科书里的说法，不是实测结论</span>
+    <span class="dl-note">名字颜色＝教科书说法；数字颜色＝相对基准高低</span>
   </div>
-  <div class="plist">
-    ${ranked.map(p => {
-      const v = VERDICT[p.verdict] || ['—', ''];
-      return `<div class="prow" data-pid="${p.id}"><span class="pn ${dirCls(p)}">${dirName(p)}</span>
-        <span class="pnum">n=${p.n}</span>
-        <span class="pnum ${rateCls(p)}">${fmtPct(p.upRate)}</span>
-        <span class="pz">${p.z >= 0 ? '+' : ''}${fmtNum(p.z)}</span>
-        <span class="badge ${v[1]}">${v[0]}</span></div>`;
-    }).join('')}
-  </div>
+  <div class="plist">${ranked.map(rowHTML).join('')}</div>
   <div class="note">
     <b>形态名颜色</b>（▲红 / ▼绿 / ·灰）＝这种形态在教科书里通常被当成看多 / 看空 / 中性，
     <b>和实测结果无关</b>，两者经常相反。<br>
@@ -376,13 +435,24 @@
 
       <div class="sh-stats">
         <div><span>历史触发</span><b>${p.n} 次</b></div>
-        <div><span>次日上涨</span><b class="${p.upRate > p.baseRate ? 'rate-hi' : 'rate-lo'}">${fmtPct(p.upRate)}</b></div>
-        <div><span>基准</span><b>${fmtPct(p.baseRate)}</b></div>
-        <div><span>差异</span><b class="${cls2(deltaPp)}">${Number.isFinite(deltaPp) ? (deltaPp > 0 ? '+' : '') + deltaPp.toFixed(1) + ' pp' : '—'}</b></div>
-        <div><span>z 值</span><b>${Number.isFinite(p.z) ? (p.z > 0 ? '+' : '') + p.z.toFixed(2) : '—'}</b></div>
-        <div><span>5 日均涨</span><b class="${cls2(p.fwd5)}">${bp(p.fwd5)}</b></div>
-        <div><span>10 日均涨</span><b class="${cls2(p.fwd10)}">${bp(p.fwd10)}</b></div>
+        <div><span>20 日 z 值</span><b>${Number.isFinite(p.z20) ? (p.z20 > 0 ? '+' : '') + p.z20.toFixed(2) : '—'}</b></div>
       </div>
+
+      <div class="hztable">
+        <div class="hzhead"><span>持有</span><span>本形态</span><span>基准</span><span>差</span></div>
+        ${[[1, p.upRate, p.baseRate], [5, p.up5, p.base5], [20, p.up20, p.base20]].map(([h2, a, b2]) => {
+          const d2 = a - b2;
+          const cc = d2 > 0.01 ? 'rate-hi' : d2 < -0.01 ? 'rate-lo' : '';
+          return `<div class="hzrow"><span>${h2} 日后</span><b>${fmtPct(a)}</b><b>${fmtPct(b2)}</b><b class="${cc}">${Number.isFinite(d2) ? (d2 > 0 ? '+' : '') + (d2 * 100).toFixed(1) + 'pp' : '—'}</b></div>`;
+        }).join('')}
+      </div>
+
+      ${p.mkt ? `<div class="sh-mkt">
+        全市场同形态（${p.mkt.n} 次）：1日 ${fmtPct(p.mkt.u1)} · 5日 ${fmtPct(p.mkt.u5)} · 20日 ${fmtPct(p.mkt.u20)}
+        ${Number.isFinite(p.up20) && Number.isFinite(p.mkt.u20)
+          ? `<br>本票 20 日 ${fmtPct(p.up20)}，比全市场 ${(p.up20 - p.mkt.u20) >= 0 ? '高' : '低'} ${Math.abs((p.up20 - p.mkt.u20) * 100).toFixed(1)}pp`
+          : ''}
+      </div>` : ''}
 
       ${reasons.length ? `<div class="sh-warn">${reasons.map(r => '· ' + esc(r)).join('<br>')}</div>` : ''}
 
@@ -425,4 +495,8 @@
     load(sym);
   })();
 })();
+
+
+
+
 
