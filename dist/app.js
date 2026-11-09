@@ -778,6 +778,71 @@
     };
   }
 
+  /* ---------------------------------------------------------------- 分时 / 市场实时 */
+
+  const TRENDS = 'https://push2his.eastmoney.com/api/qt/stock/trends2/get';
+  const PUSH = 'https://push2.eastmoney.com/api/qt';
+
+  /** 分时数据。ndays=1 当日 241 点，ndays=5 五日 1205 点 */
+  async function fetchTrends(sym, ndays = 1) {
+    const qs = new URLSearchParams({
+      secid: secid(sym), iscr: 0, ndays,
+      fields1: 'f1,f2,f3,f4,f5,f6,f7,f8',
+      fields2: 'f51,f52,f53,f54,f55,f56,f57,f58',
+    });
+    const r = await fetch(`${TRENDS}?${qs}`, { cache: 'no-store' });
+    if (!r.ok) throw new Error('分时 HTTP ' + r.status);
+    const j = await r.json();
+    const d = j && j.data;
+    if (!d || !d.trends || !d.trends.length) throw new Error('无分时数据');
+    const pts = [];
+    for (const line of d.trends) {
+      const p = line.split(',');
+      const c = +p[2];
+      if (!Number.isFinite(c)) continue;
+      const hi = +p[3], lo = +p[4];
+      let avg = +p[7];
+      // 第 8 个字段的"均价"偶尔不可靠，超出当日最高最低就丢掉
+      if (!Number.isFinite(avg) || avg < lo * 0.9 || avg > hi * 1.1) avg = NaN;
+      pts.push({ t: p[0], o: +p[1], c, h: hi, l: lo, v: +p[5], a: +p[6], avg });
+    }
+    return { preClose: d.preClose, name: d.name, points: pts };
+  }
+
+  /** 涨跌家数（市场宽度） */
+  async function fetchBreadth() {
+    const qs = new URLSearchParams({
+      fltt: 2, invt: 2, secids: '1.000001,0.399001,0.399006',
+      fields: 'f12,f14,f104,f105,f106',
+    });
+    const r = await fetch(`${PUSH}/ulist.np/get?${qs}`, { cache: 'no-store' });
+    if (!r.ok) throw new Error('宽度 HTTP ' + r.status);
+    const j = await r.json();
+    const arr = (j && j.data && j.data.diff) || [];
+    return arr.map(x => ({ code: x.f12, name: x.f14, up: x.f104, down: x.f105, flat: x.f106 }));
+  }
+
+  /* 宽基 ETF 白名单：代码 -> 简称（简称由接口返回，这里只做筛选） */
+  const BROAD_ETF = new Set([
+    '510300', '510500', '588000', '159915', '510050',
+    '512100', '159949', '588080', '510880', '512890',
+  ]);
+
+  /** 宽基 ETF 实时：涨跌、成交额、主力净流入 */
+  async function fetchEtfFlows() {
+    const qs = new URLSearchParams({
+      pn: 1, pz: 100, po: 1, np: 1, fltt: 2, invt: 2, fid: 'f6',
+      fs: 'b:MK0021,b:MK0022,b:MK0023,b:MK0024',
+      fields: 'f12,f14,f2,f3,f6,f62',
+    });
+    const r = await fetch(`${PUSH}/clist/get?${qs}`, { cache: 'no-store' });
+    if (!r.ok) throw new Error('ETF HTTP ' + r.status);
+    const j = await r.json();
+    const arr = (j && j.data && j.data.diff) || [];
+    return arr.filter(x => BROAD_ETF.has(x.f12)).map(x => ({
+      code: x.f12, name: x.f14, px: x.f2, chg: x.f3, amt: x.f6, flow: x.f62,
+    }));
+  }
   /* ---------------------------------------------------------------- 全市场基线
    * baseline.json 由 build_baseline.js 预生成：同一形态在全市场 233 只股票上的
    * 平均表现。作用是给"本票"的数字一个参照系——60.8% 到底是这票特别，还是所有票都这样。
@@ -899,8 +964,10 @@
     // 计算
     computeIndicators, computePatterns, health, computeState, loadBaseline, loadScreen,
     comboStats, activeToday,
+    fetchTrends, fetchBreadth, fetchEtfFlows,
     getIndex: () => INDEX,
   };
 })(window);
+
 
 

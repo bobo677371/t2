@@ -1,4 +1,4 @@
-/* chart.js — 纯 canvas 的 K 线图（零依赖）
+﻿/* chart.js — 纯 canvas 的 K 线图（零依赖）
  * 不引 lightweight-charts 的原因：CDN 在国内不稳，且离线/PWA 要能跑。
  * 功能：蜡烛图 + MA5/20/60 + 成交量 + 拖拽平移 + 触摸十字光标 + 档位切换
  */
@@ -275,4 +275,140 @@
   }
 
   global.T2Chart = { render, COL };
+
+  /* ---------------------------------------------------------------- 分时图 */
+
+  /** 画分时：价格线 + 均价线 + 昨收基准 + 成交量
+   *  data = { preClose, points:[{t,c,v,avg}] }
+   */
+  function mountTrend(container, data) {
+    if (!container || !data || !data.points || !data.points.length) return null;
+    container.innerHTML = '';
+    const canvas = document.createElement('canvas');
+    canvas.style.cssText = 'width:100%;height:100%;display:block';
+    container.appendChild(canvas);
+    const pts = data.points;
+    const n = pts.length;
+    let minY = Infinity, maxY = -Infinity, maxV = 0;
+    for (const p of pts) {
+      if (p.c < minY) minY = p.c;
+      if (p.c > maxY) maxY = p.c;
+      if (Number.isFinite(p.avg)) { if (p.avg < minY) minY = p.avg; if (p.avg > maxY) maxY = p.avg; }
+      if (p.v > maxV) maxV = p.v;
+    }
+    const pc = data.preClose;
+    if (Number.isFinite(pc)) { minY = Math.min(minY, pc); maxY = Math.max(maxY, pc); }
+    if (!(maxY > minY)) { maxY = minY + 1; }
+    const padY = (maxY - minY) * 0.08;
+    minY -= padY; maxY += padY;
+
+    const last = pts[n - 1].c;
+    const isUp = !Number.isFinite(pc) || last >= pc;
+    const lineCol = isUp ? COL.up : COL.down;
+
+    const PAD_L = 8, PAD_R = 52, PAD_T = 10, VOL_H = 42, PAD_B = 18;
+
+    function draw() {
+      const { ctx, w, h } = fit(canvas);
+      const plotW = w - PAD_L - PAD_R;
+      const plotH = h - PAD_T - VOL_H - PAD_B;
+      if (plotW <= 10 || plotH <= 10) return;
+
+      const X = i => PAD_L + (n <= 1 ? 0 : (i / (n - 1)) * plotW);
+      const Y = v => PAD_T + (1 - (v - minY) / (maxY - minY)) * plotH;
+
+      // 网格 + 右侧价格刻度
+      ctx.font = '10px -apple-system,system-ui,sans-serif';
+      ctx.textBaseline = 'middle';
+      const ticks = 4;
+      for (let i = 0; i <= ticks; i++) {
+        const v = maxY - (i / ticks) * (maxY - minY);
+        const y = Y(v);
+        ctx.strokeStyle = COL.grid; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(PAD_L, y + 0.5); ctx.lineTo(PAD_L + plotW, y + 0.5); ctx.stroke();
+        const pct = Number.isFinite(pc) && pc ? (v / pc - 1) * 100 : NaN;
+        ctx.fillStyle = Number.isFinite(pct) ? (pct >= 0 ? COL.up : COL.down) : COL.axis;
+        ctx.textAlign = 'left';
+        ctx.fillText(v.toFixed(v > 1000 ? 2 : 3), PAD_L + plotW + 5, y);
+      }
+
+      // 昨收基准线
+      if (Number.isFinite(pc)) {
+        const y = Y(pc);
+        ctx.strokeStyle = COL.cross; ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath(); ctx.moveTo(PAD_L, y + 0.5); ctx.lineTo(PAD_L + plotW, y + 0.5); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      // 成交量柱
+      const volTop = PAD_T + plotH + 8;
+      const bw = Math.max(1, plotW / n - 0.6);
+      for (let i = 0; i < n; i++) {
+        const vh = maxV ? (pts[i].v / maxV) * (VOL_H - 6) : 0;
+        const prevC = i > 0 ? pts[i - 1].c : (Number.isFinite(pc) ? pc : pts[i].c);
+        ctx.fillStyle = pts[i].c >= prevC ? COL.up : COL.down;
+        ctx.globalAlpha = 0.55;
+        ctx.fillRect(X(i) - bw / 2, volTop + (VOL_H - 6) - vh, bw, vh);
+        ctx.globalAlpha = 1;
+      }
+
+      // 均价线
+      let anyAvg = false;
+      ctx.strokeStyle = COL.ma5; ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      for (let i = 0; i < n; i++) {
+        const a = pts[i].avg;
+        if (!Number.isFinite(a)) continue;
+        const x = X(i), y = Y(a);
+        if (!anyAvg) { ctx.moveTo(x, y); anyAvg = true; } else ctx.lineTo(x, y);
+      }
+      if (anyAvg) ctx.stroke();
+
+      // 价格线 + 下方渐变填充
+      ctx.beginPath();
+      for (let i = 0; i < n; i++) { const x = X(i), y = Y(pts[i].c); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+      ctx.strokeStyle = lineCol; ctx.lineWidth = 1.6; ctx.stroke();
+      ctx.lineTo(X(n - 1), PAD_T + plotH);
+      ctx.lineTo(X(0), PAD_T + plotH);
+      ctx.closePath();
+      const g = ctx.createLinearGradient(0, PAD_T, 0, PAD_T + plotH);
+      g.addColorStop(0, isUp ? 'rgba(245,69,92,.22)' : 'rgba(62,207,142,.22)');
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g; ctx.fill();
+
+      // 时间刻度
+      ctx.fillStyle = COL.axis; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      const marks = n > 200 ? [0, 60, 120, 180, n - 1] : [0, Math.floor(n / 2), n - 1];
+      for (const i of marks) {
+        if (i < 0 || i >= n) continue;
+        const t = String(pts[i].t || '');
+        const hhmm = t.length >= 16 ? t.slice(11, 16) : t;
+        ctx.fillText(hhmm, Math.min(Math.max(X(i), 18), PAD_L + plotW - 18), PAD_T + plotH + 4);
+      }
+
+      // 最后一笔价格标签
+      const yl = Y(last);
+      ctx.fillStyle = lineCol;
+      ctx.fillRect(PAD_L + plotW + 2, yl - 8, PAD_R - 3, 16);
+      ctx.fillStyle = '#0e1116'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      ctx.fillText(last.toFixed(last > 1000 ? 2 : 3), PAD_L + plotW + 5, yl);
+    }
+
+    draw();
+    let raf = 0;
+    const onResize = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(draw); };
+    if (window.ResizeObserver) {
+      const ro = new ResizeObserver(onResize);
+      ro.observe(canvas);
+    } else {
+      window.addEventListener('resize', onResize);
+    }
+    return { draw };
+  }
+
+  global.T2Chart = global.T2Chart || {};
+  global.T2Chart.mountTrend = mountTrend;
 })(window);
+
+

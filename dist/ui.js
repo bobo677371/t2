@@ -1,4 +1,4 @@
-/* ui.js — 界面渲染
+﻿/* ui.js — 界面渲染
  * 只负责把 app.js 算好的东西画出来，不做任何计算
  */
 (function () {
@@ -148,8 +148,17 @@
       const state = T2.computeState(k, d);
       const baseline = await T2.loadBaseline();
       const screen = await T2.loadScreen();
+      // 实时数据：任何一个失败都不影响主流程
+      const [trR, brR, etR] = await Promise.allSettled([
+        T2.fetchTrends(sym, 1), T2.fetchBreadth(), T2.fetchEtfFlows(),
+      ]);
+      const rt = {
+        trend: trR.status === 'fulfilled' ? trR.value : null,
+        breadth: brR.status === 'fulfilled' ? brR.value : null,
+        etf: etR.status === 'fulfilled' ? etR.value : null,
+      };
       const h = T2.health(k, d, flags, baseline);
-      current = { sym, k, d, state, h, flags, screen };
+      current = { sym, k, d, state, h, flags, screen, rt };
       lastLoadAt = Date.now();
       render();
       if (silent) window.scrollTo(0, keepY);
@@ -370,6 +379,65 @@
       </section>`;
     };
 
+    /** 分时图 */
+    const trendHTML = () => {
+      const rt = current.rt;
+      if (!rt || !rt.trend || !rt.trend.points || !rt.trend.points.length) return '';
+      const p = rt.trend.points, pc = rt.trend.preClose;
+      const last = p[p.length - 1].c;
+      const chg = Number.isFinite(pc) && pc ? (last / pc - 1) * 100 : NaN;
+      const hi = p.reduce((a, x) => Math.max(a, x.c), -Infinity);
+      const lo = p.reduce((a, x) => Math.min(a, x.c), Infinity);
+      const cls = !Number.isFinite(chg) ? 'flat' : chg >= 0 ? 'up' : 'down';
+      return `<section class="card">
+        <h2>分时 <span class="pnum">${esc(String(p[p.length - 1].t).slice(0, 10))}</span></h2>
+        <div class="rt-sum">
+          <span class="rt-px ${cls}">${last.toFixed(last > 1000 ? 2 : 3)}</span>
+          <span class="${cls}">${Number.isFinite(chg) ? (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%' : '—'}</span>
+          <span class="rt-meta">高 ${hi.toFixed(2)} · 低 ${lo.toFixed(2)}</span>
+        </div>
+        <div id="trendbox" class="trendbox"></div>
+        <div class="note" style="padding-bottom:0">黄线＝均价　灰虚线＝昨收 ${Number.isFinite(pc) ? pc.toFixed(2) : ''}</div>
+      </section>`;
+    };
+
+    /** 市场实时：涨跌家数 + 宽基 ETF 资金流 */
+    const marketHTML = () => {
+      const rt = current.rt;
+      if (!rt) return '';
+      const br = rt.breadth || [];
+      const etf = (rt.etf || []).slice().sort((a, b) => (b.flow || 0) - (a.flow || 0));
+      if (!br.length && !etf.length) return '';
+
+      const brHTML = br.length ? `<div class="brlist">${br.map(x => {
+        const up = x.up || 0, dn = x.down || 0, fl = x.flat || 0;
+        const tot = up + dn + fl || 1;
+        return `<div class="brrow">
+          <span class="brn">${esc(x.name)}</span>
+          <span class="brbar"><i style="width:${(up / tot * 100).toFixed(1)}%"></i></span>
+          <span class="brt"><b class="up">${up}</b><em>/</em><b class="down">${dn}</b></span>
+        </div>`;
+      }).join('')}</div>` : '';
+
+      const etfHTML = etf.length ? `<div class="etflist">${etf.map(x => {
+        const f = (x.flow || 0) / 1e8;
+        const nm = String(x.name || '').replace(/ETF.*$/, '').replace(/华泰柏瑞|华夏|易方达|南方|华安|华泰/g, '');
+        return `<div class="etfrow">
+          <span class="etfn">${esc(nm)}</span>
+          <span class="etfc ${x.chg >= 0 ? 'up' : 'down'}">${x.chg >= 0 ? '+' : ''}${Number(x.chg).toFixed(2)}%</span>
+          <span class="etff ${f >= 0 ? 'up' : 'down'}">${f >= 0 ? '+' : ''}${f.toFixed(2)}亿</span>
+        </div>`;
+      }).join('')}</div>` : '';
+
+      const sum = etf.reduce((a, x) => a + (x.flow || 0), 0) / 1e8;
+      return `<section class="card">
+        <h2>市场实时</h2>
+        ${brHTML ? `<div class="rt-sub">涨跌家数（红涨绿跌）</div>${brHTML}` : ''}
+        ${etfHTML ? `<div class="rt-sub">宽基 ETF 主力净流入　合计 <b class="${sum >= 0 ? 'up' : 'down'}">${sum >= 0 ? '+' : ''}${sum.toFixed(2)} 亿</b></div>${etfHTML}` : ''}
+        <div class="note">主力净流入＝大单买额−大单卖额，盘中实时变化，收盘后才定型；不是申购赎回份额。</div>
+      </section>`;
+    };
+
     main.innerHTML = `
 <section class="card quote">
   <div class="name">
@@ -388,6 +456,8 @@
   <div id="chartbox" class="chartbox"></div>
 </section>
 
+${trendHTML()}
+
 <section class="card">
   <h2>状态</h2>
   <div class="dims">
@@ -396,6 +466,8 @@
       <div class="s">量比 ${fmtNum(current.d.vr[last])} · 位于近 750 日的 ${fmtNum(state.volUpPct, 0)}% 分位</div></div>
   </div>
 </section>
+
+${marketHTML()}
 
 <section class="card">
   <h2>今日触发 <span class="pnum">${triggered.length} 个</span></h2>
@@ -411,7 +483,8 @@
 ${comboHTML()}
 
 <section class="card">
-  <h2>形态体检 <span class="pnum">区间 ${T2.HEALTH_FROM} 起</span></h2>
+  <details class="fold">
+  <summary><b>形态体检</b> <span class="pnum">区间 ${T2.HEALTH_FROM} 起 · 共 ${T2.PATTERNS.length} 个形态，点开看统计</span></summary>
   <div class="legend">
     <span><b>本票</b>＝这只票自己的历史（每次点开都按当前标的重算）</span>
     <span><b>全市场</b>＝同一形态在 ${h.mktStocks || 233} 只股票上的平均（参照系）</span>
@@ -432,6 +505,7 @@ ${comboHTML()}
     34 个形态同时检验时需 |z| ≥ 3.17 才算校正后显著。<br>
     样本少于 ${T2.MIN_N} 次一律标「样本不足」，不当结论用。
   </div>
+  </details>
 </section>
 
 ${screenHTML()}
@@ -451,6 +525,12 @@ ${screenHTML()}
     if (box && window.T2Chart) {
       try { T2Chart.render(box, k, current.d); }
       catch (e) { box.innerHTML = '<div class="muted">图表渲染失败</div>'; }
+    }
+    // 画分时
+    const tbox = $('trendbox');
+    if (tbox && window.T2Chart && window.T2Chart.mountTrend && current.rt && current.rt.trend) {
+      try { window.T2Chart.mountTrend(tbox, current.rt.trend); }
+      catch (e) { tbox.innerHTML = '<div class="muted">分时渲染失败</div>'; }
     }
 
     // 手动刷新
@@ -576,6 +656,10 @@ ${screenHTML()}
     load(sym);
   })();
 })();
+
+
+
+
 
 
 
