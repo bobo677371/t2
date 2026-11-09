@@ -383,8 +383,6 @@
   <div class="meta">${esc(state.date)} · 成交 ${fmtAmt(state.amount)} · 共 ${k.close.length} 根日线 · 更新于 ${hhmm(lastLoadAt)}</div>
 </section>
 
-${screenHTML()}
-
 <section class="card chart-card">
   <h2>日 K</h2>
   <div id="chartbox" class="chartbox"></div>
@@ -435,6 +433,8 @@ ${comboHTML()}
     样本少于 ${T2.MIN_N} 次一律标「样本不足」，不当结论用。
   </div>
 </section>
+
+${screenHTML()}
 
 <section class="card">
   <h2>说明</h2>
